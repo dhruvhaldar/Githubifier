@@ -102,11 +102,14 @@ python githubifier.py "C:\MyLargeDataset" "D:\Backups" --split 2g
     - If `.\venv\Scripts\Activate.ps1` fails, run: `Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser`
 
 ### Pro Tip: Using runner.py
-If typing long paths in the command line is tedious, execute:
+If typing long paths in the command line is tedious, you can use a runner script:
+1. Copy `runner.py.example` to `runner.py`.
+2. Edit `runner.py` to set your `SOURCE_DIR` and `DEST_DIR`.
+3. Run it easily:
 ```bash
 python runner.py
 ```
-Edit `runner.py` to set your `SOURCE_DIR` and `DEST_DIR` once, and run it easily!
+*Note: `runner.py` is ignored by git, so your local paths won't be committed.*
 
 ## License
 [MIT License](LICENSE). Feel free to use and modify!

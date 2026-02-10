@@ -1,2 +1,6 @@
-__pycache__/githubifier.cpython-313.pyc
+__pycache__/
+*.pyc
 venv/
+runner.py
+# Keep runner.py.example in the repo
+!runner.py.example

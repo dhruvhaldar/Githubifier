@@ -61,6 +61,14 @@ def check_dependencies():
         print("[ERROR] Critical dependency missing: 7-Zip.")
         print("  - Please install 7-Zip from https://www.7-zip.org/")
         print("  - Ensure '7z' is in your PATH or in a standard install location.")
+        print("  - Ensure '7z' is in your PATH or in a standard install location.")
+        sys.exit(1)
+
+    # 3. Check Git
+    if not shutil.which("git"):
+        print("[ERROR] Critical dependency missing: git.")
+        print("  - Please install Git from https://git-scm.com/")
+        print("  - Ensure 'git' is in your PATH.")
         sys.exit(1)
 
 def check_permissions(source, dest_dir):
@@ -141,6 +149,22 @@ def cleanup_partial_files(dest_dir, archive_name_base):
         except OSError as e:
             print(f" - Failed to delete {f.name}: {e}")
 
+def ensure_git_init(dest_dir):
+    """
+    Ensures the destination directory is a git repository.
+    If not, initializes it.
+    """
+    git_dir = dest_dir / ".git"
+    if not git_dir.exists():
+        print(f"\n[GIT] Initializing new git repository in: {dest_dir}")
+        try:
+            subprocess.run(["git", "init"], cwd=dest_dir, check=True)
+        except subprocess.CalledProcessError as e:
+            print(f"[WARN] Failed to initialize git repository: {e}")
+            # We don't raise error here, as compression can still succeed
+    else:
+        print(f"\n[GIT] Destination is already a git repository.")
+
 def githubify_safe(source_path, output_dir, split_size=DEFAULT_SPLIT_SIZE, dry_run=False):
     """
     Compresses a source directory into a split 7-Zip archive with safety checks.
@@ -180,6 +204,7 @@ def githubify_safe(source_path, output_dir, split_size=DEFAULT_SPLIT_SIZE, dry_r
     # Create output dir if needed (Skip in dry run if it doesn't exist)
     if not dry_run:
         dest_dir.mkdir(parents=True, exist_ok=True)
+        ensure_git_init(dest_dir)
     else:
         print(f"[DRY RUN] Would create directory: {dest_dir}")
 

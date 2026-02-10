@@ -46,6 +46,23 @@ def find_7z_binary():
                 return p
     return None
 
+def check_dependencies():
+    """
+    Checks if all required external dependencies are installed.
+    Exits with error if dependencies are missing.
+    """
+    # 1. Check Python Version
+    if sys.version_info < (3, 6):
+        print(f"[ERROR] Python 3.6+ is required. You are using {platform.python_version()}")
+        sys.exit(1)
+
+    # 2. Check 7-Zip
+    if not find_7z_binary():
+        print("[ERROR] Critical dependency missing: 7-Zip.")
+        print("  - Please install 7-Zip from https://www.7-zip.org/")
+        print("  - Ensure '7z' is in your PATH or in a standard install location.")
+        sys.exit(1)
+
 def get_dir_size(path):
     """
     Recursively calculates the total size of a directory in bytes.
@@ -314,6 +331,7 @@ if __name__ == "__main__":
         sys.exit(1)
 
     # Mode 3: Normal Execution
+    check_dependencies()
     try:
         githubify_safe(args.source, args.destination, args.split, args.dry_run)
     except GithubifierError as e:

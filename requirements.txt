@@ -1,0 +1,5 @@
+# No external Python dependencies required.
+# This project uses only the Python Standard Library.
+#
+# External Requirements:
+# - 7-Zip (must be in system PATH)

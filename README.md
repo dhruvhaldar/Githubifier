@@ -56,10 +56,10 @@ source venv/bin/activate
 *You know you are in the virtual environment when you see `(venv)` at the start of your command prompt.*
 
 ### 3. Install Requirements
-This script relies primarily on the Python standard library. However, if any `requirements.txt` exists or for future proofing:
+This script uses standard Python libraries. However, if you are setting up a development environment:
 ```bash
 pip install -r requirements.txt
-# If no requirements.txt exists, you are good to go with standard Python!
+# This ensures consistency, though currently there are no external Python dependencies.
 ```
 
 ## Usage

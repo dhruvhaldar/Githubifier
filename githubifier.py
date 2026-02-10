@@ -63,6 +63,31 @@ def check_dependencies():
         print("  - Ensure '7z' is in your PATH or in a standard install location.")
         sys.exit(1)
 
+def check_permissions(source, dest_dir):
+    """
+    Validates read/write permissions for source and destination.
+    """
+    # 1. Source Read Check
+    if not os.access(source, os.R_OK):
+        print(f"[ERROR] Source is not readable: {source}")
+        return False
+        
+    # 2. Destination Write Check
+    # Check if we can write to the destination directory or its parent(s)
+    chk_path = dest_dir
+    while not chk_path.exists():
+        # Go up one level
+        parent = chk_path.parent
+        if parent == chk_path: # Root reached
+             break
+        chk_path = parent
+
+    if not os.access(chk_path, os.W_OK):
+        print(f"[ERROR] Destination path is not writable: {chk_path}")
+        return False
+             
+    return True
+
 def get_dir_size(path):
     """
     Recursively calculates the total size of a directory in bytes.
@@ -147,21 +172,14 @@ def githubify_safe(source_path, output_dir, split_size=DEFAULT_SPLIT_SIZE, dry_r
     # --- 1. Validation Checks ---
     print(f"--- 1. Pre-flight Checks: {source.name} ---")
     
-    if not source.exists():
-        raise GithubifierError(f"Source path does not exist: {source}")
     
-    if not os.access(source, os.R_OK):
-        raise GithubifierError(f"Source path is not readable: {source}")
+    # Permission Check
+    if not check_permissions(source, dest_dir):
+        raise GithubifierError("Permission check failed.")
 
     # Create output dir if needed (Skip in dry run if it doesn't exist)
     if not dry_run:
-        try:
-            dest_dir.mkdir(parents=True, exist_ok=True)
-        except PermissionError:
-            raise GithubifierError(f"Permission denied creating output directory: {dest_dir}")
-        
-        if not os.access(dest_dir, os.W_OK):
-            raise GithubifierError(f"Output directory is not writable: {dest_dir}")
+        dest_dir.mkdir(parents=True, exist_ok=True)
     else:
         print(f"[DRY RUN] Would create directory: {dest_dir}")
 
@@ -270,6 +288,40 @@ def githubify_safe(source_path, output_dir, split_size=DEFAULT_SPLIT_SIZE, dry_r
 
     print(f"\n[DONE] Archive saved to: {dest_dir}")
     return True
+
+def run_custom_task(source_dir, dest_dir, split_size, dry_run=True):
+    """
+    Wrapper for running Githubifier from a custom runner script.
+    Handles user interaction, validation, and error reporting.
+    """
+    print("--- Githubifier Runner ---")
+    print(f"Source:      {source_dir}")
+    print(f"Destination: {dest_dir}")
+    print(f"Split Size:  {split_size}")
+    print(f"Mode:        {'DRY RUN (No files will be created)' if dry_run else 'LIVE EXECUTION'}")
+    print("-" * 30)
+
+    # Basic validity check for the default placeholder value
+    # We check if the path contains 'Path\To\Your' as a heuristic for unmodified template
+    if not os.path.exists(source_dir) or "Path\\To\\Your" in str(source_dir):
+         print(f"[ERROR] Source path is invalid or does not exist: {source_dir}")
+         print("        Please update 'SOURCE_DIR' in your runner script.")
+         return
+
+    # Check dependencies
+    try:
+        check_dependencies()
+    except SystemExit:
+        return 
+
+    try:
+        githubify_safe(source_dir, dest_dir, split_size=split_size, dry_run=dry_run)
+    except GithubifierError as e:
+        print(f"\n[ERROR] {e}")
+    except Exception as e:
+        print(f"\n[UNEXPECTED ERROR] {e}")
+
+    input("\nPress Enter to exit...")
 
 # --- Unit Tests ---
 class TestGithubifier(unittest.TestCase):

@@ -101,5 +101,12 @@ python githubifier.py "C:\MyLargeDataset" "D:\Backups" --split 2g
 - **Execution Policy Error (PowerShell)**:
     - If `.\venv\Scripts\Activate.ps1` fails, run: `Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser`
 
+### Pro Tip: Using runner.py
+If typing long paths in the command line is tedious, execute:
+```bash
+python runner.py
+```
+Edit `runner.py` to set your `SOURCE_DIR` and `DEST_DIR` once, and run it easily!
+
 ## License
 [MIT License](LICENSE). Feel free to use and modify!

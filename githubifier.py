@@ -165,6 +165,73 @@ def ensure_git_init(dest_dir):
     else:
         print(f"\n[GIT] Destination is already a git repository.")
 
+def push_to_github(dest_dir, dry_run=False):
+    """
+    Automates the process of creating a private GitHub repo and pushing files.
+    """
+    dest_path = Path(dest_dir).resolve()
+    repo_name = dest_path.name
+    
+    print(f"\n--- 4. Pushing to GitHub ({repo_name}) ---")
+    
+    # Check for gh CLI
+    if not shutil.which("gh"):
+        print("[ERROR] GitHub CLI (gh) not found. Please install it: https://cli.github.com/")
+        return
+
+    # Check for git
+    if not shutil.which("git"):
+        print("[ERROR] Git not found.")
+        return
+
+    if dry_run:
+        print(f"[DRY RUN] Would execute:")
+        print(f"  cd {dest_path}")
+        print(f"  git init (if not exists)")
+        print(f"  git add .")
+        print(f"  git commit -m 'Add split archives'")
+        print(f"  gh repo create {repo_name} --private --source=. --remote=origin")
+        print(f"  git push -u origin master")
+        return
+
+    # 1. Ensure git init (idempotent)
+    ensure_git_init(dest_path)
+
+    try:
+        # 2. Add files
+        print("[GIT] Adding files...")
+        subprocess.run(["git", "add", "."], cwd=dest_path, check=True)
+        
+        # 3. Commit
+        # Check if there are changes to commit
+        status = subprocess.run(["git", "status", "--porcelain"], cwd=dest_path, capture_output=True, text=True)
+        if status.stdout.strip():
+            print("[GIT] Committing changes...")
+            subprocess.run(["git", "commit", "-m", "Add split archives"], cwd=dest_path, check=True)
+        else:
+            print("[GIT] No changes to commit.")
+
+        # 4. Create Repo (if not exists)
+        # Check if remote origin exists
+        remotes = subprocess.run(["git", "remote"], cwd=dest_path, capture_output=True, text=True)
+        if "origin" not in remotes.stdout:
+            print(f"[GH] Creating private repository '{repo_name}'...")
+            # This command creates the repo on GitHub and adds the remote 'origin'
+            subprocess.run(["gh", "repo", "create", repo_name, "--private", "--source=.", "--remote=origin"], cwd=dest_path, check=True)
+        else:
+            print("[GH] Remote 'origin' already exists. Skipping repo creation.")
+
+        # 5. Push
+        print("[GIT] Pushing to origin...")
+        subprocess.run(["git", "push", "-u", "origin", "master"], cwd=dest_path, check=True)
+        
+        print(f"\n[SUCCESS] Successfully pushed to https://github.com/{subprocess.check_output(['gh', 'api', 'user', '-q', '.login'], text=True).strip()}/{repo_name}")
+
+    except subprocess.CalledProcessError as e:
+        print(f"\n[ERROR] GitHub automation failed: {e}")
+        print("Please check your 'gh' auth status ('gh auth status') and try again.")
+
+
 def githubify_safe(source_path, output_dir, split_size=DEFAULT_SPLIT_SIZE, dry_run=False):
     """
     Compresses a source directory into a split 7-Zip archive with safety checks.
@@ -389,6 +456,7 @@ if __name__ == "__main__":
     parser.add_argument("source", nargs="?", help="Source folder path to compress")
     parser.add_argument("destination", nargs="?", help="Destination folder for output files")
     parser.add_argument("--split", default=DEFAULT_SPLIT_SIZE, help=f"Split size (e.g., 10m, 1g). Default: {DEFAULT_SPLIT_SIZE}")
+    parser.add_argument("--push", action="store_true", help="Automatically create private repo and push to GitHub (requires gh CLI)")
     parser.add_argument("--dry-run", action="store_true", help="Simulate the process without writing files")
     parser.add_argument("--test", action="store_true", help="Run internal unit tests")
 
@@ -411,6 +479,18 @@ if __name__ == "__main__":
     check_dependencies()
     try:
         githubify_safe(args.source, args.destination, args.split, args.dry_run)
+        
+        if args.push:
+            push_to_github(args.destination, args.dry_run)
+        else:
+            print("\n--- Next Steps ---")
+            print("To push this to GitHub manually, run inside the destination folder:")
+            print("  git init")
+            print("  git add .")
+            print("  git commit -m 'Add split archives'")
+            print("  gh repo create <repo_name> --private --source=. --remote=origin")
+            print("  git push -u origin master")
+            
     except GithubifierError as e:
         print(f"\n[ERROR] {e}")
         sys.exit(1)

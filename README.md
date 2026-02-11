@@ -91,6 +91,45 @@ python githubifier.py "C:\MyLargeDataset" "D:\Backups" --split 95m
 python githubifier.py "C:\MyLargeDataset" "D:\Backups" --split 2g
 ```
 
+**5. Automatically Push to GitHub (New!):**
+This requires the GitHub CLI (`gh`) to be installed and authenticated.
+```bash
+python githubifier.py "C:\MyLargeDataset" "D:\Backups\MyRepo" --push
+```
+*This will create a private repository named `MyRepo` and push the archives.*
+
+## Pushing to GitHub
+
+### Option A: Automatic (Recommended)
+Use the `--push` flag as shown in Example 5. This handles:
+1. Initializing the git repository.
+2. Creating a private repository on GitHub.
+3. Adding, committing, and pushing the files.
+
+### Option B: Manual (Classic Git)
+If you prefer to do it yourself or don't have the GitHub CLI:
+1. Create a new repository on GitHub (Manual).
+2. Open a terminal in your destination folder.
+3. Run:
+   ```bash
+   git init
+   git add .
+   git commit -m "Add split archives"
+   git remote add origin https://github.com/YOUR_USERNAME/YOUR_REPO.git
+   git push -u origin master
+   ```
+
+### Option C: Manual (with gh CLI)
+You can also run the commands output by the script manually:
+```bash
+cd destination_folder
+git init
+git add .
+git commit -m "Add split archives"
+gh repo create <repo_name> --private --source=. --remote=origin
+git push -u origin master
+```
+
 ## Troubleshooting
 
 - **"7-Zip executable not found"**:

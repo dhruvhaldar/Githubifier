@@ -216,6 +216,7 @@ def get_remote_repo_size(repo_name, owner=None):
 def push_to_github(dest_dir, dry_run=False, repo_name=None):
     """
     Automates the process of creating a private GitHub repo and pushing files.
+    Uses chunked pushing to avoid timeouts (Safe Zone: < 500MB).
     """
     dest_path = Path(dest_dir).resolve()
     if not repo_name:
@@ -237,44 +238,86 @@ def push_to_github(dest_dir, dry_run=False, repo_name=None):
         print(f"[DRY RUN] Would execute:")
         print(f"  cd {dest_path}")
         print(f"  git init (if not exists)")
-        print(f"  git add .")
-        print(f"  git commit -m 'Add split archives'")
         print(f"  gh repo create {repo_name} --private --source=. --remote=origin")
-        print(f"  git push -u origin master")
+        print(f"  [Chunked Push Logic]: Add/Commit/Push in batches of ~500MB")
         return
 
     # 1. Ensure git init (idempotent)
     ensure_git_init(dest_path)
 
     try:
-        # 2. Add files
-        print("[GIT] Adding files...")
-        subprocess.run(["git", "add", "."], cwd=dest_path, check=True)
-        
-        # 3. Commit
-        # Check if there are changes to commit
-        status = subprocess.run(["git", "status", "--porcelain"], cwd=dest_path, capture_output=True, text=True)
-        if status.stdout.strip():
-            print("[GIT] Committing changes...")
-            subprocess.run(["git", "commit", "-m", "Add split archives"], cwd=dest_path, check=True)
-        else:
-            print("[GIT] No changes to commit.")
-
-        # 4. Create Repo (if not exists)
+        # 2. Create Repo (if not exists) FIRST to ensure we have a remote
         # Check if remote origin exists
         remotes = subprocess.run(["git", "remote"], cwd=dest_path, capture_output=True, text=True)
         if "origin" not in remotes.stdout:
             print(f"[GH] Creating private repository '{repo_name}'...")
             # This command creates the repo on GitHub and adds the remote 'origin'
+            # We use --source=. but we haven't committed anything yet, which is fine, it just sets up the remote
             subprocess.run(["gh", "repo", "create", repo_name, "--private", "--source=.", "--remote=origin"], cwd=dest_path, check=True)
         else:
             print("[GH] Remote 'origin' already exists. Skipping repo creation.")
 
-        # 5. Push
-        print("[GIT] Pushing to origin...")
-        subprocess.run(["git", "push", "-u", "origin", "master"], cwd=dest_path, check=True)
+        # 3. Chunked Push Logic
+        # 500 MB Safe Limit
+        SAFE_PUSH_LIMIT = 500 * 1024 * 1024
+
+        # Get list of untracked/modified files
+        # We use 'git status' to find files.
+        # Note: This is a simplification. For a fresh init, all files are untracked.
+        status_output = subprocess.check_output(["git", "status", "--porcelain"], cwd=dest_path, text=True)
+
+        files_to_push = []
+        for line in status_output.splitlines():
+            # porcelain format: XY Path
+            # ?? untracked
+            # M  modified
+            # A  added
+            code = line[:2]
+            filepath = line[3:].strip()
+            # Remove quotes if present (git status might quote paths with spaces)
+            if filepath.startswith('"') and filepath.endswith('"'):
+                filepath = filepath[1:-1]
+            files_to_push.append(dest_path / filepath)
+
+        # Sort files to ensure sequential upload (important for .001, .002...)
+        files_to_push.sort(key=lambda p: p.name)
         
-        print(f"\n[SUCCESS] Successfully pushed to https://github.com/{subprocess.check_output(['gh', 'api', 'user', '-q', '.login'], text=True).strip()}/{repo_name}")
+        current_batch_size = 0
+        current_batch_files = []
+        batch_count = 1
+
+        print(f"[GIT] preparing to push {len(files_to_push)} files in safe batches...")
+
+        for file_path in files_to_push:
+            if not file_path.exists():
+                continue # Should not happen based on status, but safety check
+
+            file_size = file_path.stat().st_size
+
+            # If adding this file exceeds limit, push the current batch first
+            # Exception: If a single file is > limit (which shouldn't happen with our splitter),
+            # we must push it alone or with the current batch.
+            if current_batch_size + file_size > SAFE_PUSH_LIMIT and current_batch_files:
+                print(f"[GIT] Pushing Batch #{batch_count} ({current_batch_size / (1024*1024):.2f} MB)...")
+                subprocess.run(["git", "add"] + [str(f.name) for f in current_batch_files], cwd=dest_path, check=True)
+                subprocess.run(["git", "commit", "-m", f"Upload batch {batch_count}"], cwd=dest_path, check=True)
+                subprocess.run(["git", "push", "origin", "master"], cwd=dest_path, check=True)
+
+                current_batch_files = []
+                current_batch_size = 0
+                batch_count += 1
+
+            current_batch_files.append(file_path)
+            current_batch_size += file_size
+
+        # Push remaining files
+        if current_batch_files:
+            print(f"[GIT] Pushing Batch #{batch_count} (Final, {current_batch_size / (1024*1024):.2f} MB)...")
+            subprocess.run(["git", "add"] + [str(f.name) for f in current_batch_files], cwd=dest_path, check=True)
+            subprocess.run(["git", "commit", "-m", f"Upload batch {batch_count}"], cwd=dest_path, check=True)
+            subprocess.run(["git", "push", "origin", "master"], cwd=dest_path, check=True)
+
+        print(f"\n[SUCCESS] All batches pushed to https://github.com/{subprocess.check_output(['gh', 'api', 'user', '-q', '.login'], text=True).strip()}/{repo_name}")
 
     except subprocess.CalledProcessError as e:
         print(f"\n[ERROR] GitHub automation failed: {e}")

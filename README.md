@@ -11,6 +11,7 @@
 
 - **Automated Splitting**: Splits large archives into chunks (default 40MB) compatible with GitHub.
 - **Smart Repository Batching**: Automatically checks if your target GitHub repository exceeds 4.5GB. If so, it creates a new "batch" repository (e.g., `MyRepo_batch_2`) to store the new archive, keeping your data organized and within limits.
+- **Safe Push Technology**: Implements chunked uploading to avoid timeouts and "RPC failed" errors. Large datasets are pushed in safe batches (approx. 500MB each), ensuring reliability even on slower connections.
 - **Safety First**:
     - **Dry Run Mode**: Preview what will happen without writing any files.
     - **Disk Space Checks**: Warns if the destination drive is running low on space.
@@ -71,8 +72,13 @@ Basic command syntax:
 python githubifier.py [SOURCE_DIR] [DESTINATION_DIR] [OPTIONS]
 ```
 
-### Automatic Batching
+### Automatic Batching & Limits
 When using Githubifier, your files are organized into batch subfolders (e.g., `Destination/RepoName`, `Destination/RepoName_batch_2`) to manage separate git repositories. This ensures that no single repository exceeds the 4.5GB limit.
+
+Furthermore, Githubifier respects **GitHub Push Limits** to avoid timeouts:
+- **Safe Zone (< 500MB)**: Pushes are chunked into batches of roughly 500MB.
+- **Caution Zone (500MB - 2GB)**: Avoided by chunking.
+- **Danger Zone (> 2GB)**: Strictly avoided.
 
 ### Examples
 

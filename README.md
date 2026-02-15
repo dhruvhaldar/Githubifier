@@ -10,6 +10,7 @@
 ## Key Features
 
 - **Automated Splitting**: Splits large archives into chunks (default 40MB) compatible with GitHub.
+- **Smart Repository Batching**: Automatically checks if your target GitHub repository exceeds 4.5GB. If so, it creates a new "batch" repository (e.g., `MyRepo_batch_2`) to store the new archive, keeping your data organized and within limits.
 - **Safety First**:
     - **Dry Run Mode**: Preview what will happen without writing any files.
     - **Disk Space Checks**: Warns if the destination drive is running low on space.
@@ -22,6 +23,7 @@
 - **Python 3.6+**
 - **7-Zip** installed and available in your system PATH or default Install location.
     - *Windows Default Paths Checked:* `C:\Program Files\7-Zip\7z.exe`, `C:\Program Files (x86)\7-Zip\7z.exe`
+- **GitHub CLI (`gh`)** (Optional but Recommended): Required for automatic repository creation, pushing, and checking remote repository sizes to enable smart batching.
 
 ## Installation
 
@@ -68,6 +70,9 @@ Basic command syntax:
 ```bash
 python githubifier.py [SOURCE_DIR] [DESTINATION_DIR] [OPTIONS]
 ```
+
+### Automatic Batching
+When using Githubifier, your files are organized into batch subfolders (e.g., `Destination/RepoName`, `Destination/RepoName_batch_2`) to manage separate git repositories. This ensures that no single repository exceeds the 4.5GB limit.
 
 ### Examples
 

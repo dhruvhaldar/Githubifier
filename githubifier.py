@@ -5,6 +5,7 @@ import shutil
 import platform
 import signal
 import unittest
+from unittest.mock import patch
 import argparse
 import tempfile
 from pathlib import Path
@@ -165,12 +166,60 @@ def ensure_git_init(dest_dir):
     else:
         print(f"\n[GIT] Destination is already a git repository.")
 
-def push_to_github(dest_dir, dry_run=False):
+def get_github_user():
+    """
+    Retrieves the authenticated GitHub username using 'gh'.
+    Returns None if not authenticated or gh is missing.
+    """
+    if not shutil.which("gh"):
+        return None
+    try:
+        return subprocess.check_output(['gh', 'api', 'user', '-q', '.login'], text=True).strip()
+    except subprocess.CalledProcessError:
+        return None
+
+def get_remote_repo_size(repo_name, owner=None):
+    """
+    Gets the size of a remote GitHub repository in bytes.
+    Returns 0 if the repository does not exist or cannot be accessed.
+    """
+    if not shutil.which("gh"):
+        # Cannot check size without gh CLI
+        return 0
+
+    if not owner:
+        owner = get_github_user()
+        if not owner:
+             # Not authenticated
+             return 0
+
+    try:
+        # GitHub API returns size in KB
+        # We silence stderr to avoid printing "Not Found" messages to console
+        size_kb_str = subprocess.check_output(
+            ['gh', 'api', f'repos/{owner}/{repo_name}', '--jq', '.size'],
+            stderr=subprocess.DEVNULL,
+            text=True
+        ).strip()
+
+        if not size_kb_str:
+            return 0
+
+        return int(size_kb_str) * 1024
+    except subprocess.CalledProcessError:
+        # Likely repo does not exist
+        return 0
+    except ValueError:
+        # Malformed output
+        return 0
+
+def push_to_github(dest_dir, dry_run=False, repo_name=None):
     """
     Automates the process of creating a private GitHub repo and pushing files.
     """
     dest_path = Path(dest_dir).resolve()
-    repo_name = dest_path.name
+    if not repo_name:
+        repo_name = dest_path.name
     
     print(f"\n--- 4. Pushing to GitHub ({repo_name}) ---")
     
@@ -235,25 +284,17 @@ def push_to_github(dest_dir, dry_run=False):
 def githubify_safe(source_path, output_dir, split_size=DEFAULT_SPLIT_SIZE, dry_run=False):
     """
     Compresses a source directory into a split 7-Zip archive with safety checks.
+    Returns:
+        tuple: (Path to the directory containing archives, Repository Name)
 
     Args:
         source_path (str): Path to the folder to compress.
-        output_dir (str): Path where the archive parts will be saved.
+        output_dir (str): Path where the archive parts will be saved (Staging area).
         split_size (str): Size of split volumes (e.g., "40m", "100m").
         dry_run (bool): If True, simulates the process without writing files.
 
     Raises:
         GithubifierError: If validation, compression, or verification fails.
-
-    Examples:
-        # Standard Usage
-        >>> githubify_safe("C:/CFD/Case1", "D:/Backup", split_size="40m")
-        
-        # Dry Run (Safe Test)
-        >>> githubify_safe("C:/CFD/Case1", "D:/Backup", dry_run=True)
-        
-        # Large Split Size
-        >>> githubify_safe("C:/CFD/Case1", "D:/Backup", split_size="2g")
     """
     source = Path(source_path).resolve()
     dest_dir = Path(output_dir).resolve()
@@ -271,7 +312,6 @@ def githubify_safe(source_path, output_dir, split_size=DEFAULT_SPLIT_SIZE, dry_r
     # Create output dir if needed (Skip in dry run if it doesn't exist)
     if not dry_run:
         dest_dir.mkdir(parents=True, exist_ok=True)
-        ensure_git_init(dest_dir)
     else:
         print(f"[DRY RUN] Would create directory: {dest_dir}")
 
@@ -324,15 +364,6 @@ def githubify_safe(source_path, output_dir, split_size=DEFAULT_SPLIT_SIZE, dry_r
         f"-v{split_size}"
     ]
 
-    if dry_run:
-        print(f"[DRY RUN] Command to be executed:")
-        print(f"  {' '.join(cmd)}")
-        print(f"[DRY RUN] This would create files like:")
-        print(f"  - {archive_name}.001")
-        print(f"  - {archive_name}.002")
-        print(f"  - ...")
-        return True
-
     # Handle Ctrl+C gracefully
     def signal_handler(sig, frame):
         print("\n[INTERRUPT] Process cancelled by user.")
@@ -345,41 +376,99 @@ def githubify_safe(source_path, output_dir, split_size=DEFAULT_SPLIT_SIZE, dry_r
     except ValueError:
         pass # Signal only works in main thread
 
-    try:
-        # Run compression
-        subprocess.run(cmd, check=True)
-    except subprocess.CalledProcessError as e:
-        cleanup_partial_files(dest_dir, archive_name)
-        raise GithubifierError(f"7-Zip failed with error code {e.returncode}")
-    except Exception as e:
-        cleanup_partial_files(dest_dir, archive_name)
-        raise e
+    if dry_run:
+        print(f"[DRY RUN] Command to be executed:")
+        print(f"  {' '.join(cmd)}")
+        print(f"[DRY RUN] This would create files like:")
+        print(f"  - {archive_name}.001")
+        print(f"  - {archive_name}.002")
+        # Approximate archive size for logic testing
+        archive_size = source_size
+        archive_files = [] # No actual files
+    else:
+        try:
+            # Run compression
+            subprocess.run(cmd, check=True)
+        except subprocess.CalledProcessError as e:
+            cleanup_partial_files(dest_dir, archive_name)
+            raise GithubifierError(f"7-Zip failed with error code {e.returncode}")
+        except Exception as e:
+            cleanup_partial_files(dest_dir, archive_name)
+            raise e
 
-    # --- 4. Integrity Check ---
-    print("\n--- 3. Verifying Integrity ---")
-    # We test the first volume; 7z automatically follows the split chain
-    first_vol = dest_dir / f"{archive_name}.001"
+        # --- 4. Integrity Check ---
+        print("\n--- 3. Verifying Integrity ---")
+        # We test the first volume; 7z automatically follows the split chain
+        first_vol = dest_dir / f"{archive_name}.001"
+
+        if not first_vol.exists():
+            # Edge case: If file was small enough to not split, it might just be .7z
+            if (dest_dir / archive_name).exists():
+                first_vol = dest_dir / archive_name
+            else:
+                raise GithubifierError("Created archive file not found for verification.")
+
+        verify_cmd = [seven_z_exe, "t", str(first_vol)]
+
+        try:
+            subprocess.run(verify_cmd, check=True, stdout=subprocess.DEVNULL)
+            print("[SUCCESS] Archive verified successfully.")
+        except subprocess.CalledProcessError:
+            print("[CRITICAL ERROR] Archive verification failed! Data may be corrupt.")
+            cleanup_partial_files(dest_dir, archive_name)
+            raise GithubifierError("Integrity check failed.")
+
+        # Calculate actual archive size
+        archive_files = list(dest_dir.glob(f"{archive_name}*"))
+        archive_size = sum(f.stat().st_size for f in archive_files)
+
+    # --- 5. Batch Allocation ---
+    print(f"\n--- 4. Batch Allocation (Max Repo Size: 4.5GB) ---")
+    print(f"Total Archive Size: {archive_size / (1024*1024):.2f} MB")
+
+    repo_base_name = dest_dir.name
+    batch_num = 1
+    target_repo_name = repo_base_name
     
-    if not first_vol.exists():
-        # Edge case: If file was small enough to not split, it might just be .7z
-        # But -v switch usually forces .001 even for single files in newer 7z versions
-        if (dest_dir / archive_name).exists():
-             first_vol = dest_dir / archive_name
+    while True:
+        if batch_num > 1:
+            target_repo_name = f"{repo_base_name}_batch_{batch_num}"
+
+        print(f"Checking remote size for '{target_repo_name}'...", end="", flush=True)
+        remote_size = get_remote_repo_size(target_repo_name)
+        print(f" {remote_size / (1024*1024):.2f} MB")
+
+        # 4.5 GB limit (using 1024 based GB)
+        limit = 4.5 * 1024 * 1024 * 1024
+
+        if remote_size + archive_size <= limit:
+            print(f"[ALLOC] Selected target: {target_repo_name} (Space available)")
+            break
         else:
-             raise GithubifierError("Created archive file not found for verification.")
+            print(f"[ALLOC] {target_repo_name} is full (would exceed 4.5GB). Checking next batch...")
+            batch_num += 1
 
-    verify_cmd = [seven_z_exe, "t", str(first_vol)]
+            # Safety break to avoid infinite loops if something is wrong
+            if batch_num > 100:
+                print("[WARN] Exceeded 100 batches check. Something might be wrong. Stopping.")
+                break
+
+    # Move files to subfolder
+    target_dir = dest_dir / target_repo_name
     
-    try:
-        subprocess.run(verify_cmd, check=True, stdout=subprocess.DEVNULL)
-        print("[SUCCESS] Archive verified successfully.")
-    except subprocess.CalledProcessError:
-        print("[CRITICAL ERROR] Archive verification failed! Data may be corrupt.")
-        cleanup_partial_files(dest_dir, archive_name)
-        raise GithubifierError("Integrity check failed.")
+    if not dry_run:
+        target_dir.mkdir(parents=True, exist_ok=True)
+        print(f"Moving files to: {target_dir}")
+        for f in archive_files:
+            shutil.move(str(f), str(target_dir / f.name))
 
-    print(f"\n[DONE] Archive saved to: {dest_dir}")
-    return True
+        ensure_git_init(target_dir)
+    else:
+        print(f"[DRY RUN] Would move files to: {target_dir}")
+        print(f"[DRY RUN] Would git init {target_dir}")
+
+    print(f"\n[DONE] Archive saved to: {target_dir}")
+    return target_dir, target_repo_name
 
 def run_custom_task(source_dir, dest_dir, split_size, dry_run=True):
     """
@@ -436,12 +525,22 @@ class TestGithubifier(unittest.TestCase):
 
     def test_find_7z(self):
         """Test that 7z binary is found."""
+        # Only run if 7z is actually installed, otherwise skip
+        if not shutil.which("7z") and not shutil.which("7za"):
+             return
         binary = find_7z_binary()
         if binary:
              self.assertTrue(os.path.exists(binary))
 
-    def test_dry_run(self):
+    @patch(f'{__name__}.find_7z_binary')
+    @patch(f'{__name__}.get_remote_repo_size')
+    @patch(f'{__name__}.check_permissions')
+    def test_dry_run(self, mock_perms, mock_remote_size, mock_find_7z):
         """Test that dry run completes without error and creates no files."""
+        mock_find_7z.return_value = "7z"
+        mock_perms.return_value = True
+        mock_remote_size.return_value = 0
+
         githubify_safe(self.source_dir, self.output_dir, dry_run=True)
         # Verify no archive was created
         self.assertFalse((self.output_dir / "source_data.7z.001").exists())
@@ -478,17 +577,18 @@ if __name__ == "__main__":
     # Mode 3: Normal Execution
     check_dependencies()
     try:
-        githubify_safe(args.source, args.destination, args.split, args.dry_run)
+        final_path, repo_name = githubify_safe(args.source, args.destination, args.split, args.dry_run)
         
         if args.push:
-            push_to_github(args.destination, args.dry_run)
+            push_to_github(final_path, args.dry_run, repo_name=repo_name)
         else:
             print("\n--- Next Steps ---")
-            print("To push this to GitHub manually, run inside the destination folder:")
+            print(f"To push this to GitHub manually, run inside the destination folder:")
+            print(f"  cd {final_path}")
             print("  git init")
             print("  git add .")
             print("  git commit -m 'Add split archives'")
-            print("  gh repo create <repo_name> --private --source=. --remote=origin")
+            print(f"  gh repo create {repo_name} --private --source=. --remote=origin")
             print("  git push -u origin master")
             
     except GithubifierError as e:
